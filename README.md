@@ -11,9 +11,6 @@ I only used Python's standard library, so you don't need to pip install anything
 - `demo.py` – runs everything at once: it starts both replicas, goes through all three tests, and prints PASS/FAIL for each check.
 - `evidence/demo_output.txt` – the full output from when I ran the demo.
 
-## How to run it
-
-You'll need Python 3.8 or newer (on Mac you might have to type `python3` instead of `python`).
 
 ### Easiest way
 
@@ -25,7 +22,6 @@ This starts the primary on port 8001 and the secondary on port 8002, runs all th
 
 ### Running it manually
 
-If you want to try it yourself step by step, open three terminals:
 
 ```bash
 # Terminal 1 - secondary
