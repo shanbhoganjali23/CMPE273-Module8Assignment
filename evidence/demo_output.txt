@@ -1,0 +1,65 @@
+[20:37:10.540] [PRIMARY  ] listening on 127.0.0.1:8001, stock=10
+[20:37:10.556] [SECONDARY] listening on 127.0.0.1:8002, stock=10
+
+========== TEST 1: REPLICATION ==========
+[20:37:11.509] [PRIMARY  ] read  -> stock=10 (v0)
+[20:37:11.510] [CLIENT   ] read primary   -> stock=10 (v0)
+[20:37:11.510] [SECONDARY] read  -> stock=10 (v0)
+[20:37:11.511] [CLIENT   ] read secondary -> stock=10 (v0)
+[20:37:11.511] [CLIENT   ] write stock=12 to primary
+[20:37:11.512] [PRIMARY  ] write -> stock=12 (v1), queued for replication
+[20:37:11.512] [PRIMARY  ] read  -> stock=12 (v1)
+[20:37:11.513] [CLIENT   ] read primary   -> stock=12 (v1)
+[20:37:11.513] [CLIENT   ] PASS: primary has new value 12
+[20:37:12.022] [SECONDARY] applied replicated stock=12 (v1)
+[20:37:12.023] [PRIMARY  ] replicated stock=12 (v1) -> secondary
+[20:37:12.123] [CLIENT   ] secondary caught up after 0.61s
+[20:37:12.123] [PRIMARY  ] read  -> stock=12 (v1)
+[20:37:12.124] [CLIENT   ] read primary   -> stock=12 (v1)
+[20:37:12.124] [SECONDARY] read  -> stock=12 (v1)
+[20:37:12.125] [CLIENT   ] read secondary -> stock=12 (v1)
+[20:37:12.125] [CLIENT   ] PASS: secondary eventually received 12
+[20:37:12.125] [CLIENT   ] PASS: both replicas return the same value
+[20:37:12.125] [CLIENT   ] reset: write stock=10 to primary
+[20:37:12.125] [PRIMARY  ] write -> stock=10 (v2), queued for replication
+[20:37:12.627] [SECONDARY] applied replicated stock=10 (v2)
+[20:37:12.627] [PRIMARY  ] replicated stock=10 (v2) -> secondary
+
+========== TEST 2: STALE READ ==========
+[20:37:12.634] [PRIMARY  ] read  -> stock=10 (v2)
+[20:37:12.634] [CLIENT   ] read primary   -> stock=10 (v2)
+[20:37:12.634] [SECONDARY] read  -> stock=10 (v2)
+[20:37:12.635] [CLIENT   ] read secondary -> stock=10 (v2)
+[20:37:12.635] [CLIENT   ] pause replication to the secondary
+[20:37:12.635] [PRIMARY  ] replication PAUSED (simulating delay to secondary)
+[20:37:12.636] [CLIENT   ] write stock=9 to primary
+[20:37:12.636] [PRIMARY  ] write -> stock=9 (v3), queued for replication
+[20:37:13.637] [PRIMARY  ] read  -> stock=9 (v3)
+[20:37:13.638] [CLIENT   ] read primary   -> stock=9 (v3)
+[20:37:13.638] [SECONDARY] read  -> stock=10 (v2)
+[20:37:13.639] [CLIENT   ] read secondary -> stock=10 (v2)
+[20:37:14.640] [PRIMARY  ] read  -> stock=9 (v3)
+[20:37:14.640] [CLIENT   ] read primary   -> stock=9 (v3)
+[20:37:14.641] [SECONDARY] read  -> stock=10 (v2)
+[20:37:14.641] [CLIENT   ] read secondary -> stock=10 (v2)
+[20:37:15.642] [PRIMARY  ] read  -> stock=9 (v3)
+[20:37:15.643] [CLIENT   ] read primary   -> stock=9 (v3)
+[20:37:15.644] [SECONDARY] read  -> stock=10 (v2)
+[20:37:15.644] [CLIENT   ] read secondary -> stock=10 (v2)
+[20:37:15.644] [CLIENT   ] PASS: primary returns 9
+[20:37:15.644] [CLIENT   ] PASS: secondary returns old value 10 (STALE READ)
+
+========== TEST 3: RECOVERY AND CONVERGENCE ==========
+[20:37:15.644] [CLIENT   ] resume replication
+[20:37:15.645] [PRIMARY  ] replication RESUMED
+[20:37:16.148] [SECONDARY] applied replicated stock=9 (v3)
+[20:37:16.148] [PRIMARY  ] replicated stock=9 (v3) -> secondary
+[20:37:16.154] [CLIENT   ] secondary converged after 0.51s
+[20:37:16.155] [PRIMARY  ] read  -> stock=9 (v3)
+[20:37:16.155] [CLIENT   ] read primary   -> stock=9 (v3)
+[20:37:16.156] [SECONDARY] read  -> stock=9 (v3)
+[20:37:16.156] [CLIENT   ] read secondary -> stock=9 (v3)
+[20:37:16.156] [CLIENT   ] PASS: secondary eventually updates to 9
+[20:37:16.156] [CLIENT   ] PASS: both replicas return the same value again
+
+========== 7/7 CHECKS PASSED ==========
