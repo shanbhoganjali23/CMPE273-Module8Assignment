@@ -1,79 +1,85 @@
-# Module 8: Replication & Consistency
+# Module 8 Assignment – Replication & Consistency
 
-A small replicated inventory system in Python (standard library only, nothing to install). It has one **Primary** replica, one **Secondary** replica and a **client**. Writes go to the Primary and are copied to the Secondary **asynchronously**, so the Secondary can briefly serve stale data. That is how the stale-read test works.
+For this assignment I built a small inventory system in Python with one primary replica, one secondary replica, and a client that can read from either one. The idea was to see what happens when the secondary falls behind the primary, so I could actually observe a stale read happening and then watch the replicas catch back up.
 
-## Files
+I only used Python's standard library, so you don't need to pip install anything.
 
-| File | Purpose |
-|---|---|
-| `node.py` | A replica node. Run it as `primary` or `secondary`. Each node is its own HTTP server process. |
-| `client.py` | Client that reads from either replica, writes to the Primary, and pauses or resumes replication. |
-| `demo.py` | Starts both replicas, runs all three required tests, and prints PASS/FAIL for each check. |
-| `evidence/demo_output.txt` | Full terminal output from a run of `demo.py`. |
+## What's in the repo
 
-## How to run
+- `node.py` – the replica. You run it as either `primary` or `secondary`, and each one runs as its own little HTTP server.
+- `client.py` – the client. It can read from either replica, write to the primary, and pause/resume replication.
+- `demo.py` – runs everything at once: it starts both replicas, goes through all three tests, and prints PASS/FAIL for each check.
+- `evidence/demo_output.txt` – the full output from when I ran the demo.
 
-You need Python 3.8 or later. No packages are required.
+## How to run it
 
-### Option A: one command (recommended)
+You'll need Python 3.8 or newer (on Mac you might have to type `python3` instead of `python`).
+
+### Easiest way
 
 ```bash
 python demo.py
 ```
 
-This starts the Primary on port 8001 and the Secondary on port 8002, then runs the replication, stale-read and recovery tests and stops both servers. It exits with code 0 when every check passes.
+This starts the primary on port 8001 and the secondary on port 8002, runs all the tests, and then shuts both of them down. It takes about 6 seconds. If everything worked, the last line says `7/7 CHECKS PASSED`.
 
-### Option B: by hand, in separate terminals
+### Running it manually
+
+If you want to try it yourself step by step, open three terminals:
 
 ```bash
-# Terminal 1
+# Terminal 1 - secondary
 python node.py secondary --port 8002
 
-# Terminal 2
-python node.py primary --port 8001 --secondary http://127.0.0.1:8002 --lag 0.5
+# Terminal 2 - primary
+python node.py primary --port 8001 --secondary http://127.0.0.1:8002
 
-# Terminal 3: client
-python client.py read primary        # {'role': 'primary', 'stock': 10, 'version': 0}
+# Terminal 3 - client
+python client.py read primary
 python client.py read secondary
-python client.py write 9             # writes always go to the primary
-python client.py pause               # delay replication to the secondary
-python client.py resume              # let the queued update through
+python client.py write 9
+python client.py pause
+python client.py resume
 ```
 
-`--lag` is the normal replication delay in seconds. `pause` holds updates in the Primary's replication queue. Nothing is lost, and the updates are sent when you run `resume`.
+Writes always go to the primary. `pause` doesn't throw away updates, it just holds them in the primary's queue until you run `resume`.
 
 ## Architecture
 
 ```
-                         writes (POST /stock)
-        +--------+  ---------------------------->  +-------------------+
-        |        |                                 |  PRIMARY  :8001   |
-        |        |  <----------------------------  |  stock, version   |
-        |        |        reads (GET /stock)       |                   |
-        | CLIENT |                                 |  [ replication    |
-        |        |                                 |    queue + thread ]|
-        |        |                                 +---------+---------+
-        |        |                                           |  async POST /replicate
-        |        |                                           |  {value, version}
-        |        |                                           |  (pause / resume here)
-        |        |        reads (GET /stock)       +---------v---------+
-        |        |  <----------------------------  |  SECONDARY :8002  |
-        +--------+                                 |  read-only copy   |
-                                                   +-------------------+
+                 write (POST /stock)
+   +--------+ ----------------------->  +------------------+
+   |        |                           |  PRIMARY (8001)  |
+   |        | <-----------------------  |  stock + version |
+   |        |     read (GET /stock)     |  replication     |
+   | CLIENT |                           |  queue/thread    |
+   |        |                           +--------+---------+
+   |        |                                    |
+   |        |                                    | async update
+   |        |                                    | (can be paused)
+   |        |                                    v
+   |        |     read (GET /stock)     +------------------+
+   |        | <-----------------------  | SECONDARY (8002) |
+   +--------+                           |  read-only copy  |
+                                        +------------------+
 ```
 
-- **Primary**: accepts writes. Each write increments a version number and is put in a replication queue.
-- **Replicator thread** (inside the Primary): takes updates off the queue and sends them to the Secondary after a short lag. If the Secondary can't be reached, it retries. When replication is paused, it holds updates in the queue.
-- **Secondary**: read-only. It applies an update only if the update's version is newer than its own, so a late or repeated message can't roll it back.
-- **Client**: reads from either replica and sends writes to the Primary.
+Here's how it works:
 
-## Evidence
+- The **primary** is the only one that accepts writes. Every write bumps up a version number and gets put in a queue to be sent to the secondary.
+- A background thread in the primary sends those updates to the secondary with a small delay (0.5 seconds by default) to act like network lag. If the secondary isn't reachable, it keeps retrying.
+- The **secondary** is read-only. It only applies an update if the version is newer than what it already has, so an old or duplicate update can't move it backwards.
+- The **client** can read from either replica, which is what makes the stale read possible.
 
-All output below comes from running `python demo.py`. The full log is in [`evidence/demo_output.txt`](evidence/demo_output.txt). Lines are tagged with the process that printed them, and `vN` is the data version.
+Since replication is asynchronous, the primary doesn't wait for the secondary before saying the write worked. That's exactly why the secondary can end up behind.
 
-### 1. Replication
+## Results
 
-The Primary takes the write right away. The Secondary gets the same value about 0.5 s later, and after that both replicas return the same value.
+All of this is from running `python demo.py`. The full log is in [`evidence/demo_output.txt`](evidence/demo_output.txt). Each line shows which process printed it, and `vN` is the version number.
+
+### Test 1: Replication
+
+I wrote `stock=12` to the primary. The primary had it right away, and the secondary got it about half a second later. After that both replicas returned 12.
 
 ```
 ========== TEST 1: REPLICATION ==========
@@ -91,11 +97,11 @@ The Primary takes the write right away. The Secondary gets the same value about 
 [20:37:12.125] [CLIENT   ] PASS: both replicas return the same value
 ```
 
-(After this test the demo writes `stock=10` again so that Test 2 starts from the assignment's value.)
+After this, the demo sets stock back to 10 so the next test starts from the value in the assignment.
 
-### 2. Stale read
+### Test 2: Stale read
 
-Replication is paused and the Primary is updated from 10 to 9. For the next 3 seconds the Primary returns **9**, but the Secondary still returns the old value **10**. Any client that reads from the Secondary in that window gets a **stale read**.
+For this one I paused replication and then changed the stock on the primary from 10 to 9. I read both replicas three times over about 3 seconds. The primary kept returning 9, but the secondary still said 10 the whole time. So anyone reading from the secondary during that window would get the wrong (stale) value.
 
 ```
 ========== TEST 2: STALE READ ==========
@@ -113,9 +119,9 @@ Replication is paused and the Primary is updated from 10 to 9. For the next 3 se
 [20:37:15.644] [CLIENT   ] PASS: secondary returns old value 10 (STALE READ)
 ```
 
-### 3. Recovery and convergence
+### Test 3: Recovery and convergence
 
-When replication resumes, the queued update (v3) is sent. The Secondary moves to **9**, and both replicas agree again.
+Then I resumed replication. The update that had been sitting in the queue got sent, the secondary changed to 9 about half a second later, and both replicas matched again.
 
 ```
 ========== TEST 3: RECOVERY AND CONVERGENCE ==========
@@ -134,6 +140,6 @@ When replication resumes, the queued update (v3) is sent. The Secondary moves to
 
 ## Reflection
 
-What tradeoff exists between reading quickly from a replica and guaranteeing that the reader sees the latest value?
+**What tradeoff exists between reading quickly from a replica and guaranteeing that the reader sees the latest value?**
 
-Reading from the nearest or least-busy replica is fast and spreads the load. But with asynchronous replication, that replica can be behind the Primary. Test 2 showed this: the Secondary returned `stock=10` for several seconds after the real value had become 9. To guarantee the latest value, the client has to read from the Primary, or the system has to wait for replicas to confirm each write before acknowledging it (synchronous replication or quorum reads). Both add latency and reduce availability when a replica is slow or unreachable. The choice is between low latency and high availability with eventual consistency, or strong consistency at the cost of slower and less available reads. For data like inventory, where a stale read could oversell stock, it is worth paying that cost for the reads that matter.
+Reading from a replica is faster and takes load off the primary, but with asynchronous replication there's no guarantee the replica is up to date. I saw this in my stale read test, where the secondary kept saying the stock was 10 for a few seconds after it had already changed to 9. If you need to always see the latest value, you have to either read from the primary or make the primary wait for the replicas to confirm every write. Both of those make things slower, and if a replica is slow or goes down, writes or reads can get stuck. So basically you're choosing between speed and availability on one side and always-correct data on the other. For something like inventory, I think it makes sense to take the slower but correct reads for important things like checkout, since a stale read could mean selling something that's already out of stock.
